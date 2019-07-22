@@ -92,6 +92,56 @@ func readFlash(ctx *context.Context) map[string]string {
 	return data
 }
 
+// 通过TemplateSet结构体实现全局变量输出
+type TemplateSet struct {
+	p2.TemplateSet
+}
+
+func (set *TemplateSet) Render(beego *context, tmpl string, ctx Context) {
+	mutex.RLock()
+	template, ok := templates[tmpl]
+	mutex.RUnlock()
+
+	if !ok || devMode {
+		var err error
+		template, err = set.FromFile(beego.BConfig.WebConfig.ViewsPath + "/" + tmpl)
+		if err != nil {
+			panic(err)
+		}
+		mutex.Lock()
+		templates[tmpl] = template
+		mutex.Unlock()
+	}
+
+	var pCtx p2.Context
+	if ctx == nil {
+		pCtx = p2.Context{}
+	} else {
+		pCtx = p2.Context(ctx)
+	}
+
+	if xsrf, ok := beegoCtx.GetSecureCookie(beego.BConfig.WebConfig.XSRFKey, "_xsrf"); ok {
+		pCtx["_xsrf"] = xsrf
+	}
+
+	// Only override "flash" if it hasn't already been set in Context
+	if _, ok := ctx["flash"]; !ok {
+		if ctx == nil {
+			ctx = Context{}
+		}
+		ctx["flash"] = readFlash(beegoCtx)
+	}
+
+	err := template.ExecuteWriter(pCtx, beegoCtx.ResponseWriter)
+	if err != nil {
+		panic(err)
+	}
+}
+
+func NewSet(name string) *TemplateSet {
+	return &TemplateSet(*p2.NewSet(name))
+}
+
 func init() {
 	devMode = beego.AppConfig.String("runmode") == "dev"
 	beego.BConfig.WebConfig.AutoRender = false
